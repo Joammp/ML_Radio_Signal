@@ -1,0 +1,14 @@
+# Credenciais do Google Drive — NUNCA commitar (repositório público)
+token.json
+client_secret.json
+
+# Cache de dados baixados do Drive
+drive_cache/
+
+# Artefatos de compilação LaTeX
+*.aux
+*.log
+*.nav
+*.out
+*.snm
+*.toc
