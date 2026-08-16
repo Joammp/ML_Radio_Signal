@@ -50,7 +50,15 @@ DEAD_PROBE_BATCH  = 150     # checagem intra-época a cada N batches (detecção
 
 # ── Reação ─────────────────────────────────────────────────────────────────────
 MAX_RESTARTS      = 4       # tentativas de re-inicialização por fold
-RESTART_LR_FACTOR = 0.3     # LR da tentativa n = lr0 * 0.3**n
+# Quantas tentativas trocam APENAS a seed, mantendo o LR original.
+# A ablação mostrou que quem resolve o colapso é a inicialização, não o LR — a
+# config vencedora rodou com lr=1e-3 intacto. Baixar o LR a cada restart (o que
+# esta implementação fazia antes) só torna o arranque mais lento, enquanto o
+# detector corta na 3ª época de qualquer forma; foi assim que o QAM 4L perdeu
+# as três tentativas. Só depois de esgotar as trocas de seed é que faz sentido
+# suspeitar do LR.
+RESTART_SEED_ONLY = 2
+RESTART_LR_FACTOR = 0.3     # a partir daí, cada tentativa reduz o LR inicial
 RESTART_LR_MIN    = 1e-5    # abaixo disso, desistir do fold em vez de insistir
 
 # ── Defaults do scheduler ──────────────────────────────────────────────────────
@@ -411,8 +419,10 @@ def train_one_fold(model_fn, tr_loader, vl_loader, device, num_classes,
         model = init_weights(model_fn())
 
         if attempt > 0:
-            print(f"\n    🔄 Tentativa {attempt}/{max_restarts} — "
-                  f"nova seed={seed}, lr={cur_lr0:.2e}")
+            modo = ("só nova seed" if attempt <= RESTART_SEED_ONLY
+                    else "nova seed + LR reduzido")
+            print(f"\n    🔄 Tentativa {attempt}/{max_restarts} ({modo}) — "
+                  f"seed={seed}, lr={cur_lr0:.2e}")
 
         best_val_acc, history, dead = _train_attempt(
             model, tr_loader, vl_loader, device, num_classes,
@@ -431,14 +441,15 @@ def train_one_fold(model_fn, tr_loader, vl_loader, device, num_classes,
                       f"— val_acc={best_val_acc:.2f}%")
             return best_val_acc, full_hist, info
 
-        # Morreu: baixa o LR inicial da PRÓXIMA tentativa. O LR menor é seguro
-        # secundário — quem realmente resolve é a re-inicialização — mas ajuda
-        # nos casos em que o primeiro passo grande é o que mata a rede.
-        cur_lr0 *= RESTART_LR_FACTOR
-        if cur_lr0 < RESTART_LR_MIN:
-            print(f"    ⛔ LR inicial abaixo do piso ({RESTART_LR_MIN:.1e}) — "
-                  f"desistindo deste fold em vez de queimar épocas")
-            break
+        # Morreu. As primeiras RESTART_SEED_ONLY tentativas mudam SÓ a seed:
+        # o diagnóstico é inicialização ruim, e o LR original já é sabidamente
+        # viável. Só depois de esgotá-las é que o LR passa a ser suspeito.
+        if attempt >= RESTART_SEED_ONLY:
+            cur_lr0 *= RESTART_LR_FACTOR
+            if cur_lr0 < RESTART_LR_MIN:
+                print(f"    ⛔ LR inicial abaixo do piso ({RESTART_LR_MIN:.1e}) — "
+                      f"desistindo deste fold em vez de queimar épocas")
+                break
 
         del model
         if torch.cuda.is_available():

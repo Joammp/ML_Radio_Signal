@@ -176,11 +176,31 @@ Distinguir 16QAM / 32QAM / 64QAM / 128QAM / 256QAM em janelas de 1024 amostras �
 
 `QAM 4L`, seed 0: as três tentativas colapsaram e o v2 desistiu. É o único `status="dead"` em 20 execuções do v2.
 
-O log aponta uma **falha de projeto**: cada restart reduz o LR inicial (`1e-3 → 3e-4 → 9e-5`). Mas a ablação (§4) já havia mostrado que o que resolve é a inicialização, não o LR — a configuração C funcionou com `lr=1e-3` intacto. No QAM, que arranca lentamente, reduzir o LR torna o arranque ainda mais lento, enquanto o detector corta na terceira época de qualquer forma.
+A hipótese inicial foi de **falha de projeto**: cada restart reduzia o LR inicial (`1e-3 → 3e-4 → 9e-5`), enquanto a ablação (§4) havia mostrado que quem resolve é a inicialização e não o LR — a configuração C funcionou com `lr=1e-3` intacto. A correção proposta foi trocar apenas a seed nas primeiras tentativas, reduzindo o LR só depois.
 
-**Correção pendente:** nas primeiras tentativas trocar apenas a seed, mantendo o LR; reduzir o LR só se a troca de seed não bastar.
+### 6.2 Reteste da correção — e o que ela revelou
 
-Vale registrar a diferença de comportamento mesmo na falha: o v2 gastou 370 s e reportou `dead=True` explicitamente; o baseline gastou 530 s para produzir um `20.00%` que entraria no JSON de resultados com aparência de medição válida.
+A correção foi implementada (`RESTART_SEED_ONLY = 2`: as três primeiras tentativas mantêm o LR original) e retestada exatamente no caso perdido: QAM, `4L_32-64-128-256`, seed 0, 16.000/4.000, 12 épocas.
+
+| Tentativa | LR | Seed | Resultado |
+|---|---|---|---|
+| t0 | 1e-3 | 0 | colapsou (época 3) |
+| t1 | 1e-3 | 9973 | colapsou (época 3) |
+| t2 | 1e-3 | 19946 | colapsou (época 3) |
+| t3 | 3e-4 | 29919 | colapsou (época 3) |
+| t4 | 9e-5 | 39892 | **viva — 23.65%** |
+
+**Resultado:** `status="ok"` com 23.65%, contra `dead` / 0.00% antes. O fold foi recuperado.
+
+**Mas a justificativa da correção não se sustenta para este grupo.** Três seeds distintas com `lr=1e-3` colapsaram. O que destravou foi o LR reduzido, não a troca de seed. A correção ajudou sobretudo por permitir cinco tentativas em vez de três, alcançando um LR baixo antes de desistir.
+
+Há ainda uma nuance relevante: na rodada anterior (§6) a seed 19946 **também** colapsou a `9e-5`, enquanto a 39892 sobreviveu no mesmo LR. Para o QAM 4L, portanto, o LR reduzido parece **necessário mas não suficiente** — a seed continua importando em cima dele. Os dois fatores atuam juntos, ao contrário do que a §4 indicava para o APSK.
+
+Isso reabilita parcialmente a hipótese original da equipe. Ela está errada como **explicação do colapso**: uma loss cravada em `ln(C)` com gradiente nulo não responde a mudanças de LR, o que a §1 demonstra. Mas como **tratamento para o QAM especificamente**, uma vez resolvida a inicialização, um LR menor tem suporte empírico.
+
+Custo: 1.006 s e 20 épocas até recuperar, contra 370 s para falhar na versão anterior. O reteste tem n = 1 por par (LR, seed); as conclusões desta subseção são indicativas, não estabelecidas.
+
+Vale registrar também a diferença de comportamento na falha original: o v2 gastou 370 s e reportou `dead=True` explicitamente; o baseline gastou 530 s para produzir um `20.00%` que entraria no JSON de resultados com aparência de medição válida.
 
 ---
 
@@ -251,13 +271,16 @@ Estas limitações são materiais para a interpretação dos números acima.
 2. A correção elimina o colapso em ASK, PSK e APSK, e reduz a variância entre seeds em uma ordem de grandeza.
 3. O ranking de arquiteturas das execuções anteriores está invertido nos grupos afetados e precisa ser refeito.
 4. O QAM tem um segundo problema, de generalização, que o colapso vinha mascarando.
+5. O peso relativo de inicialização e LR **depende do grupo**: no APSK a inicialização basta; no QAM 4L o LR reduzido é necessário além dela (§6.2). Não há um único culpado.
 
 **Próximos passos, em ordem de valor.**
 
-1. Corrigir o restart para trocar a seed sem reduzir o LR (§6.1).
-2. Aplicar a correção ao notebook e refazer a busca para PSK e APSK, onde o retorno é imediato.
-3. Investigar o QAM separadamente: normalização por amostra, *data augmentation*, janelas maiores.
-4. Verificar em treino longo se a regressão observada no ASK persiste.
+1. Refazer a busca para PSK e APSK com a correção aplicada, onde o retorno é imediato.
+2. Investigar o QAM separadamente: *data augmentation*, janelas maiores, ou um LR inicial próprio para o grupo — a §6.2 sugere que `1e-3` é alto demais para ele.
+3. Verificar em treino longo se a regressão observada no ASK (§5.3) persiste.
+4. Repetir o reteste da §6.2 com mais seeds por nível de LR, para separar efeito de LR de efeito de seed com alguma confiança estatística.
+
+**Já feito:** a correção do restart (§6.2) e a aplicação ao notebook estão no branch `corrige-colapso-inicializacao`.
 
 ---
 
@@ -271,6 +294,7 @@ Todos os scripts e resultados brutos estão em [`colapso_inicializacao/`](colaps
 | `ablacao.py` / `ablacao_result.json` | Ablação da §4 |
 | `validacao_5grupos.py` / `validacao5.json` | Validação estendida da §5 |
 | `qam_maisdados.py` / `qam_maisdados.json` | Rodada dedicada de QAM da §6 |
+| `qam_retest.py` / `qam_retest.json` | Reteste do restart corrigido, §6.2 |
 | `test_v2.py` | Testes do módulo: caminho feliz e colapso forçado |
 
 Os scripts baixam os HDF5 por grupo diretamente do Drive via `token.json` (não versionado) e apagam os arquivos ao final de cada grupo. Requisitos: `torch`, `h5py`, `numpy`, `scikit-learn`, `tqdm`, `google-api-python-client`.
