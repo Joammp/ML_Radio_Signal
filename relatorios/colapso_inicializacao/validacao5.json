@@ -1,0 +1,408 @@
+{
+ "ASK": [
+  {
+   "grupo": "ASK",
+   "C": 3,
+   "arch": "2L_32-64",
+   "seed": 0,
+   "cfg": "baseline",
+   "best_val": 78.93,
+   "dead": false,
+   "restarts": 0,
+   "secs": 34
+  },
+  {
+   "grupo": "ASK",
+   "C": 3,
+   "arch": "2L_32-64",
+   "seed": 0,
+   "cfg": "v2",
+   "best_val": 74.53,
+   "dead": false,
+   "restarts": 0,
+   "secs": 37
+  },
+  {
+   "grupo": "ASK",
+   "C": 3,
+   "arch": "2L_32-64",
+   "seed": 1,
+   "cfg": "baseline",
+   "best_val": 78.47,
+   "dead": false,
+   "restarts": 0,
+   "secs": 32
+  },
+  {
+   "grupo": "ASK",
+   "C": 3,
+   "arch": "2L_32-64",
+   "seed": 1,
+   "cfg": "v2",
+   "best_val": 72.4,
+   "dead": false,
+   "restarts": 0,
+   "secs": 36
+  },
+  {
+   "grupo": "ASK",
+   "C": 3,
+   "arch": "4L_32-64-128-256",
+   "seed": 0,
+   "cfg": "baseline",
+   "best_val": 76.73,
+   "dead": false,
+   "restarts": 0,
+   "secs": 54
+  },
+  {
+   "grupo": "ASK",
+   "C": 3,
+   "arch": "4L_32-64-128-256",
+   "seed": 0,
+   "cfg": "v2",
+   "best_val": 75.6,
+   "dead": false,
+   "restarts": 0,
+   "secs": 58
+  },
+  {
+   "grupo": "ASK",
+   "C": 3,
+   "arch": "4L_32-64-128-256",
+   "seed": 1,
+   "cfg": "baseline",
+   "best_val": 79.73,
+   "dead": false,
+   "restarts": 0,
+   "secs": 54
+  },
+  {
+   "grupo": "ASK",
+   "C": 3,
+   "arch": "4L_32-64-128-256",
+   "seed": 1,
+   "cfg": "v2",
+   "best_val": 78.87,
+   "dead": false,
+   "restarts": 0,
+   "secs": 59
+  }
+ ],
+ "PSK": [
+  {
+   "grupo": "PSK",
+   "C": 7,
+   "arch": "2L_32-64",
+   "seed": 0,
+   "cfg": "baseline",
+   "best_val": 28.3,
+   "dead": false,
+   "restarts": 0,
+   "secs": 33
+  },
+  {
+   "grupo": "PSK",
+   "C": 7,
+   "arch": "2L_32-64",
+   "seed": 0,
+   "cfg": "v2",
+   "best_val": 55.07,
+   "dead": false,
+   "restarts": 0,
+   "secs": 36
+  },
+  {
+   "grupo": "PSK",
+   "C": 7,
+   "arch": "2L_32-64",
+   "seed": 1,
+   "cfg": "baseline",
+   "best_val": 51.47,
+   "dead": false,
+   "restarts": 0,
+   "secs": 33
+  },
+  {
+   "grupo": "PSK",
+   "C": 7,
+   "arch": "2L_32-64",
+   "seed": 1,
+   "cfg": "v2",
+   "best_val": 57.14,
+   "dead": false,
+   "restarts": 0,
+   "secs": 37
+  },
+  {
+   "grupo": "PSK",
+   "C": 7,
+   "arch": "4L_32-64-128-256",
+   "seed": 0,
+   "cfg": "baseline",
+   "best_val": 14.29,
+   "dead": true,
+   "restarts": 0,
+   "secs": 55
+  },
+  {
+   "grupo": "PSK",
+   "C": 7,
+   "arch": "4L_32-64-128-256",
+   "seed": 0,
+   "cfg": "v2",
+   "best_val": 61.48,
+   "dead": false,
+   "restarts": 0,
+   "secs": 57
+  },
+  {
+   "grupo": "PSK",
+   "C": 7,
+   "arch": "4L_32-64-128-256",
+   "seed": 1,
+   "cfg": "baseline",
+   "best_val": 14.29,
+   "dead": true,
+   "restarts": 0,
+   "secs": 54
+  },
+  {
+   "grupo": "PSK",
+   "C": 7,
+   "arch": "4L_32-64-128-256",
+   "seed": 1,
+   "cfg": "v2",
+   "best_val": 63.28,
+   "dead": false,
+   "restarts": 0,
+   "secs": 58
+  }
+ ],
+ "APSK": [
+  {
+   "grupo": "APSK",
+   "C": 4,
+   "arch": "2L_32-64",
+   "seed": 0,
+   "cfg": "baseline",
+   "best_val": 25.47,
+   "dead": true,
+   "restarts": 0,
+   "secs": 33
+  },
+  {
+   "grupo": "APSK",
+   "C": 4,
+   "arch": "2L_32-64",
+   "seed": 0,
+   "cfg": "v2",
+   "best_val": 51.2,
+   "dead": false,
+   "restarts": 0,
+   "secs": 36
+  },
+  {
+   "grupo": "APSK",
+   "C": 4,
+   "arch": "2L_32-64",
+   "seed": 1,
+   "cfg": "baseline",
+   "best_val": 26.67,
+   "dead": true,
+   "restarts": 0,
+   "secs": 32
+  },
+  {
+   "grupo": "APSK",
+   "C": 4,
+   "arch": "2L_32-64",
+   "seed": 1,
+   "cfg": "v2",
+   "best_val": 46.4,
+   "dead": false,
+   "restarts": 0,
+   "secs": 36
+  },
+  {
+   "grupo": "APSK",
+   "C": 4,
+   "arch": "4L_32-64-128-256",
+   "seed": 0,
+   "cfg": "baseline",
+   "best_val": 25.0,
+   "dead": true,
+   "restarts": 0,
+   "secs": 53
+  },
+  {
+   "grupo": "APSK",
+   "C": 4,
+   "arch": "4L_32-64-128-256",
+   "seed": 0,
+   "cfg": "v2",
+   "best_val": 60.2,
+   "dead": false,
+   "restarts": 0,
+   "secs": 58
+  },
+  {
+   "grupo": "APSK",
+   "C": 4,
+   "arch": "4L_32-64-128-256",
+   "seed": 1,
+   "cfg": "baseline",
+   "best_val": 25.0,
+   "dead": true,
+   "restarts": 0,
+   "secs": 54
+  },
+  {
+   "grupo": "APSK",
+   "C": 4,
+   "arch": "4L_32-64-128-256",
+   "seed": 1,
+   "cfg": "v2",
+   "best_val": 59.27,
+   "dead": false,
+   "restarts": 1,
+   "secs": 88
+  }
+ ],
+ "QAM": [
+  {
+   "grupo": "QAM",
+   "C": 5,
+   "arch": "2L_32-64",
+   "seed": 0,
+   "cfg": "baseline",
+   "best_val": 20.67,
+   "dead": true,
+   "restarts": 0,
+   "secs": 33
+  },
+  {
+   "grupo": "QAM",
+   "C": 5,
+   "arch": "2L_32-64",
+   "seed": 0,
+   "cfg": "v2",
+   "best_val": 20.53,
+   "dead": false,
+   "restarts": 0,
+   "secs": 36
+  },
+  {
+   "grupo": "QAM",
+   "C": 5,
+   "arch": "2L_32-64",
+   "seed": 1,
+   "cfg": "baseline",
+   "best_val": 20.6,
+   "dead": true,
+   "restarts": 0,
+   "secs": 33
+  },
+  {
+   "grupo": "QAM",
+   "C": 5,
+   "arch": "2L_32-64",
+   "seed": 1,
+   "cfg": "v2",
+   "best_val": 22.53,
+   "dead": false,
+   "restarts": 1,
+   "secs": 63
+  },
+  {
+   "grupo": "QAM",
+   "C": 5,
+   "arch": "4L_32-64-128-256",
+   "seed": 0,
+   "cfg": "baseline",
+   "best_val": 20.13,
+   "dead": true,
+   "restarts": 0,
+   "secs": 55
+  },
+  {
+   "grupo": "QAM",
+   "C": 5,
+   "arch": "4L_32-64-128-256",
+   "seed": 0,
+   "cfg": "v2",
+   "best_val": 20.8,
+   "dead": false,
+   "restarts": 1,
+   "secs": 100
+  },
+  {
+   "grupo": "QAM",
+   "C": 5,
+   "arch": "4L_32-64-128-256",
+   "seed": 1,
+   "cfg": "baseline",
+   "best_val": 20.87,
+   "dead": true,
+   "restarts": 0,
+   "secs": 54
+  },
+  {
+   "grupo": "QAM",
+   "C": 5,
+   "arch": "4L_32-64-128-256",
+   "seed": 1,
+   "cfg": "v2",
+   "best_val": 20.27,
+   "dead": false,
+   "restarts": 1,
+   "secs": 89
+  }
+ ],
+ "AM": [
+  {
+   "grupo": "AM",
+   "C": 4,
+   "arch": "2L_32-64",
+   "seed": 0,
+   "cfg": "baseline",
+   "best_val": 53.67,
+   "dead": false,
+   "restarts": 0,
+   "secs": 32
+  },
+  {
+   "grupo": "AM",
+   "C": 4,
+   "arch": "2L_32-64",
+   "seed": 0,
+   "cfg": "v2",
+   "best_val": 50.67,
+   "dead": false,
+   "restarts": 0,
+   "secs": 36
+  },
+  {
+   "grupo": "AM",
+   "C": 4,
+   "arch": "2L_32-64",
+   "seed": 1,
+   "cfg": "baseline",
+   "best_val": 54.13,
+   "dead": false,
+   "restarts": 0,
+   "secs": 33
+  },
+  {
+   "grupo": "AM",
+   "C": 4,
+   "arch": "2L_32-64",
+   "seed": 1,
+   "cfg": "v2",
+   "best_val": 51.33,
+   "dead": false,
+   "restarts": 0,
+   "secs": 36
+  }
+ ]
+}
