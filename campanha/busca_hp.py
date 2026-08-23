@@ -1093,17 +1093,23 @@ def train_one_fold(model, tr_loader, vl_loader, device,
                          drops=ck['consec_drops'], m_acc=ck['marco_acc'],
                          m_ep=ck['marco_ep'], hist=list(ck['history']),
                          lr=ck['lr'])
+            # torch.load(..., map_location=device) move TODOS os tensores do
+            # checkpoint para a GPU -- inclusive os estados de RNG. Mas
+            # set_rng_state e Generator.set_state exigem ByteTensor de CPU, e
+            # falham com TypeError('RNG state must be a torch.ByteTensor').
+            # Visto em producao em 22/08/2026 no fold 1 do TODAS/ResNet.
+            def _byte_cpu(t):
+                return t.detach().to('cpu', torch.uint8) if torch.is_tensor(t) else t
+
             if ck.get('rng_torch') is not None:
-                torch.set_rng_state(ck['rng_torch'].cpu()
-                                    if hasattr(ck['rng_torch'], 'cpu')
-                                    else ck['rng_torch'])
+                torch.set_rng_state(_byte_cpu(ck['rng_torch']))
             if ck.get('rng_cuda') and torch.cuda.is_available():
                 try:
-                    torch.cuda.set_rng_state_all(ck['rng_cuda'])
+                    torch.cuda.set_rng_state_all([_byte_cpu(t) for t in ck['rng_cuda']])
                 except Exception:
                     pass          # numero de GPUs mudou entre as VMs
             if ck.get('rng_loader') is not None and getattr(tr_loader, 'generator', None):
-                tr_loader.generator.set_state(ck['rng_loader'])
+                tr_loader.generator.set_state(_byte_cpu(ck['rng_loader']))
             if ck.get('rng_np') is not None:
                 np.random.set_state(ck['rng_np'])
             if ck.get('rng_py') is not None:
