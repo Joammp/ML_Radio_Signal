@@ -1,0 +1,33 @@
+# Artefatos da campanha: o que e resultado fica; o que e regeneravel ou enorme, nao.
+#
+# resultados/ e medicoes/ somam ~600 MB em disco, quase tudo em checkpoints e
+# logs. Os JSON de fold -- que sao a medicao de fato, com history epoca a epoca
+# -- ficam em ~600 KB no total e vao para o repositorio.
+
+__pycache__/
+*.pyc
+
+# Checkpoints do fold em andamento. Ate 200 MB cada na CNN (8,4 M de parametros,
+# quase todos na densa). Sao estado transitorio: a VM os apaga ao concluir o
+# fold, e o resultado ja esta no kfold_fold_results.json.
+*.pt
+*.pt.tmp
+*.pt.json
+*.pt.novo
+*.pt.vm
+
+# Logs de execucao. Os anteriores a 22/08/2026 chegam a 28 MB porque o tqdm
+# escrevia uma linha por batch fora do terminal; depois do monkeypatch do
+# runner_vm ficaram em dezenas de KB, mas continuam sendo saida transitoria.
+runner_*.log
+prep.log
+escolhe_lr.log
+
+# Gerado pelo painel a cada job, so carrega as variaveis de ambiente da VM.
+_env.py
+
+# Estado do espelhamento para o Drive (hashes locais).
+.sincronizado.json
+
+# Temporarios do espelho
+*.tmp

@@ -6,33 +6,108 @@ Celulas 13 (H5PyDataset) e 18 (busca), com hiperparametros
 parametrizados por linha de comando.
 
 Diferencas em relacao ao notebook, e por que:
-  LEARNING_RATE  1e-3 -> 9e-05   1e-3 colapsa o QAM (15/15 folds medidos em 19/08/2026)
+  LEARNING_RATE  1e-3 -> 4.5e-05   1e-3 colapsa o QAM (15/15 folds medidos em 19/08/2026)
   LR_PATIENCE    5    -> 8      pedido do usuario
   EARLY_STOP     15   -> 20     acompanha a paciencia maior
   drive_push/pull     -> no-op    o upload ao Drive e feito pelo app LOCAL, para
                                   o token de escopo `drive` nunca sair da maquina
 
-RESSALVA: lr=9e-05 nao e garantia. Em 3 seeds testadas no QAM 4L, 1 ainda colapsou
-nesse valor, e o escape observado ocorreu de fato em 4.5e-5, apos a primeira
-reducao de plato. Se o QAM voltar a colapsar em massa, 4.5e-5 e o proximo valor.
+RESSALVA: lr=4.5e-05 escolhido por medicao em 21/08/2026 (campanha/escolhe_lr.py,
+QAM 4L, LR fixo sem scheduler, 3 seeds por degrau, L4 com TF32 desligado):
+
+    9e-05    0/3 vivos   best med 20,98%   escape med ep 27,7   <- default anterior
+    4.5e-05  2/3 vivos   best med 23,85%   escape med ep  7,8   <- escolhido
+    2.2e-05  2/3 vivos   best med 23,23%   escape med ep  4,2
+    1.1e-05  1/3 vivos   best med 22,38%   escape med ep  3,2
+
+O comportamento e um U invertido: 9e-05 mata tudo, e descer demais tambem piora.
+
+Nao e garantia: 1 das 3 seeds morre mesmo no melhor degrau -- e ela morreu nos
+QUATRO LRs testados. Esse terco restante e colapso de inicializacao, nao problema
+de LR; baixar mais nao resolve (1.1e-5 ja tentou). E o caso da camada de restart
+com nova seed do train_one_fold_v2.
+
+2.2e-05 e alternativa legitima: sua pior seed ficou a 0,07 p.p. do limiar de vivo.
+Escolhido 4.5e-05 pelo teto mais alto (26,62% vs 23,57%).
+
+PARADA ANTECIPADA: MIN_DELTA=0.1 e LR_MIN=1e-07 vieram de medicao em 21/08/2026,
+sobre o history de um fold real do ASK (2L_32-64) que rodou as 120 epocas sem o
+early stop disparar. Naquele fold o plato foi alcancado na ep. 27 (a 0,25 p.p.
+do melhor); as 93 epocas seguintes renderam 0,25 p.p., contra um ruido de
+p90=0,24 p.p. entre epocas vizinhas -- ou seja, ganho dentro do ruido.
+
+Com os valores antigos (0.05 / 1e-9) o replay fiel do laco para so na ep. 118:
+2% de economia. Com 0.1 / 1e-07 para na ep. 94: 22% de economia por 0,04 p.p.
+
+MIN_DELTA tem de ficar ACIMA do ruido da val_acc; abaixo dele, uma oscilacao
+para cima conta como melhora e zera a paciencia. Confira com
+campanha/analisa_folds.py se 0.1 continua acima do ruido no SEU grupo e
+arquitetura -- isto foi medido no ASK 2L_32-64, o grupo mais facil e a rede menor.
 """
 import argparse
+import os
+import shlex
 import sys
 
 _p = argparse.ArgumentParser(description="Busca de HP de um grupo de modulacao")
 _p.add_argument("--grupos", nargs="+", required=True,
                 help="grupos a processar, ex.: QAM  (ASK PSK APSK QAM)")
-_p.add_argument("--lr", type=float, default=9e-05,
+_p.add_argument("--lr", type=float, default=4.5e-05,
                 help="learning rate inicial (default: %(default)g)")
 _p.add_argument("--lr-patience", type=int, default=8,
                 help="epocas sem melhora ate reduzir o LR (default: %(default)d)")
 _p.add_argument("--early-stop", type=int, default=20,
                 help="epocas sem melhora, com LR no piso, ate encerrar (default: %(default)d)")
+_p.add_argument("--min-delta", type=float, default=0.1,
+                help="p.p. de val_acc que contam como melhora (default: %(default)g)")
+_p.add_argument("--lr-min", type=float, default=1e-07,
+                help="piso do LR; o early stop so dispara nele (default: %(default)g)")
+_p.add_argument("--stagnation-patience", type=int, default=25,
+                help="epocas sem avanco real ate encerrar o fold (default: %(default)d)")
+_p.add_argument("--stagnation-margin", type=float, default=0.25,
+                help="p.p. de val_acc que contam como avanco real (default: %(default)g)")
+_p.add_argument("--modelo", choices=["cnn", "resnet", "reducao"], default="cnn",
+                help="cnn = busca de arquitetura (12 candidatas); resnet = arquitetura"
+                     " fixa do artigo arXiv:1712.04578 (default: %(default)s)")
+_p.add_argument("--drive-base", default="/content/drive_cache/radioml_sessions",
+                help="raiz dos artefatos. No Colab web, aponte para uma pasta do"
+                     " Drive montado para os resultados sobreviverem a queda da"
+                     " sessao (default: %(default)s)")
+_p.add_argument("--epochs", type=int, default=120,
+                help="teto de epocas por fold. Valor alto (ex. 1000) faz o fold"
+                     " terminar SO por parada antecipada (default: %(default)d)")
+_p.add_argument("--ckpt-every", type=int, default=5,
+                help="epocas entre checkpoints do fold em andamento; 0 desliga"
+                     " (default: %(default)d)")
 _p.add_argument("--device", default="cuda",
                 help="cuda, cuda:0, cuda:1, cpu (default: %(default)s)")
 _p.add_argument("--base-dir", default="/content",
                 help="raiz local dos artefatos (default: %(default)s)")
-_ARGS = _p.parse_args()
+
+
+def _argv_bh():
+    """De onde vem os parametros.
+
+    Sob `colab exec` o script roda DENTRO do kernel IPython: sys.argv e o do
+    colab_kernel_launcher (-f kernel-xxx.json), nao o que se digitou. E o
+    `colab exec` 0.6.0 sequer aceita args extras -- rejeita com "No such
+    option: --grupos". Como --grupos e obrigatorio, o script morria na primeira
+    linha. Medido em 21/08/2026; o uso documentado no README nunca funcionou.
+
+    Saida: variavel de ambiente, que persiste entre execs no mesmo kernel.
+    Antes de rodar este script, num exec separado:
+        import os; os.environ["BUSCA_HP_ARGS"] = "--grupos QAM --lr 4.5e-5"
+    """
+    raw = os.environ.get("BUSCA_HP_ARGS")
+    if raw is not None:
+        return shlex.split(raw)
+    argv = sys.argv[1:]
+    if any("kernel" in a and a.endswith(".json") for a in argv):
+        return []                       # argv do kernel launcher: descarta
+    return argv
+
+
+_ARGS = _p.parse_args(_argv_bh())
 
 # ── Fonte de dados: Kaggle publico, sem credencial ────────────────────────────
 import kagglehub
@@ -127,6 +202,30 @@ import numpy as np
 import torch
 import torch.nn as nn
 import torch.optim as optim
+
+# ResNet fiel a Tabela IV / Figura 5 de arXiv:1712.04578; ver campanha/resnet.py
+import importlib.util as _ilu, os as _os
+
+
+def _carrega_resnet():
+    """resnet.py fica ao lado deste arquivo; na VM, em /content (o painel envia)."""
+    tentativas = []
+    try:
+        tentativas.append(_os.path.join(
+            _os.path.dirname(_os.path.abspath(__file__)), "resnet.py"))
+    except NameError:
+        pass
+    tentativas.append("/content/resnet.py")
+    for cam in tentativas:
+        if _os.path.exists(cam):
+            sp = _ilu.spec_from_file_location("resnet", cam)
+            mod = _ilu.module_from_spec(sp)
+            sp.loader.exec_module(mod)
+            return mod
+    raise FileNotFoundError("resnet.py nao encontrado em %s" % tentativas)
+
+
+resnet = _carrega_resnet()
 from torch.utils.data import DataLoader, Subset
 from sklearn.model_selection import StratifiedKFold, train_test_split
 from tqdm import tqdm
@@ -150,32 +249,85 @@ K_FOLDS          = 5
 STRAT_BY_SNR     = True
 _STRAT_TAG       = "_stratsnr" if STRAT_BY_SNR else ""
 
-EPOCHS_PER_FOLD  = 120      # máximo de épocas por fold
+EPOCHS_PER_FOLD  = _ARGS.epochs   # teto de epocas; ver --epochs
+# Medido em 22/08/2026 na busca de reducao (ASK, candidata gap1): o fold 3
+# terminou com o MELHOR resultado na epoca 120, a ultima, e o bloco final de
+# 20 epocas ainda ganhava +1,06 p.p. -- ou seja, o teto cortou no meio da
+# subida. Com --epochs alto quem encerra e a parada por estagnacao, que mede
+# se ainda ha progresso, em vez de um numero fixo que nao sabe nada do treino.
 LR_PATIENCE      = _ARGS.lr_patience       # épocas sem melhora → LR cai pela metade
 EARLY_STOP       = _ARGS.early_stop      # épocas sem melhora → encerra o fold
-LR_MIN           = 1e-9    # LR mínimo (não cai abaixo disso)
+LR_MIN           = _ARGS.lr_min    # LR mínimo (não cai abaixo disso)
 
 # Redução ESCALONADA: se uma redução não produzir melhora, a próxima é mais
 # agressiva.  fator da n-ésima redução consecutiva = LR_FACTOR_BASE**n
 #   0.5, 0.25, 0.125, 0.0625, ...   (volta a 0.5 assim que houver melhora)
 # LR acumulado após n reduções = lr0 * BASE**(n(n+1)/2)
-#   n=1 → 5.0e-04   n=3 → 1.6e-05   n=5 → 3.1e-08   n=6 → 4.8e-10
-# ⇒ 6 reduções consecutivas levam 1e-3 abaixo de LR_MIN=1e-9,
-#   ou seja 6*LR_PATIENCE = 30 épocas de estagnação (antes: inalcançável).
+# Caminho ate o piso, partindo de lr0: sao n reducoes tais que
+#   lr0 * BASE**(n(n+1)/2) <= LR_MIN.  Para lr0=4.5e-5 e LR_MIN=1e-7 -> n=4
+#   (2.3e-5, 5.6e-6, 7.0e-7, piso).
+# ATENCAO: epochs_no_improve zera A CADA REDUCAO, entao o caminho minimo ate o
+#   early stop e n*LR_PATIENCE + EARLY_STOP epocas de estagnacao ININTERRUPTA.
+#   Um unico falso recorde acima de MIN_DELTA reinicia a contagem inteira --
+#   foi o que fez um fold do ASK rodar as 120 epocas em 21/08/2026.
 LR_FACTOR_BASE   = 0.5     # fator da 1ª redução
 LR_FACTOR_FLOOR  = 0.01    # redução máxima permitida num único passo
-MIN_DELTA        = 0.05    # p.p. de val_acc; abaixo disso é ruído, não melhora
+CKPT_EVERY          = _ARGS.ckpt_every           # epocas entre checkpoints
+STAGNATION_PATIENCE = _ARGS.stagnation_patience  # epocas sem avanco real -> encerra
+STAGNATION_MARGIN   = _ARGS.stagnation_margin    # p.p. que definem "avanco real"
+MIN_DELTA        = _ARGS.min_delta    # p.p. de val_acc; abaixo disso é ruído, não melhora
 SEED             = 42
 DROPOUT          = 0.5
 LEARNING_RATE    = _ARGS.lr
 BATCH_SIZE       = 64
 CLASSIFIER_HEAD  = [512]
 
-DRIVE_BASE       = "/content/drive_cache/radioml_sessions"  # cache local; sincronizado com o Drive via drive_push/drive_pull
+DRIVE_BASE       = _ARGS.drive_base   # ver --drive-base
+# No painel local isto e um cache em /content, espelhado para a maquina do
+# usuario. No Colab web, apontar para /content/drive/MyDrive/... faz os folds e
+# checkpoints sobreviverem ao teto de ~63 min sem precisar de orquestrador.
 LOCAL_DIR        = "/content"
 HDF5_BUILD_BATCH = 2048
 
-ARCHITECTURES = [
+# BUSCA DE REDUCAO DE PARAMETROS.
+# A arquitetura convolucional fica FIXA na 2L_32-64 (a menor da busca) e o que
+# varia e o que chega na densa. Medido para ASK (3 classes); ordenada da menor
+# para a maior, como pedido.
+_ARCH_RED = [{"out_channels": 32, "kernel_size": 7, "pool": True},
+             {"out_channels": 64, "kernel_size": 5, "pool": True}]
+_ARCH_RED6 = _ARCH_RED + [
+    {"out_channels": 64, "kernel_size": 5, "pool": True},
+    {"out_channels": 64, "kernel_size": 3, "pool": True},
+    {"out_channels": 64, "kernel_size": 3, "pool": True},
+    {"out_channels": 64, "kernel_size": 3, "pool": True}]
+
+ARQ_REDUCAO = [
+    {"label": "gap1",            "arch": _ARCH_RED,  "pool_saida": 1,
+     "classifier": [512]},                              #     45.795
+    {"label": "gap8_head128",    "arch": _ARCH_RED,  "pool_saida": 8,
+     "classifier": [128]},                              #     77.027
+    {"label": "gap4",            "arch": _ARCH_RED,  "pool_saida": 4,
+     "classifier": [512]},                              #    144.099
+    {"label": "gap8",            "arch": _ARCH_RED,  "pool_saida": 8,
+     "classifier": [512]},                              #    275.171
+    {"label": "6pools",          "arch": _ARCH_RED6, "pool_saida": None,
+     "classifier": [512]},                              #    595.427
+    {"label": "head64",          "arch": _ARCH_RED,  "pool_saida": None,
+     "classifier": [64]},                               #  1.059.811
+    {"label": "head128",         "arch": _ARCH_RED,  "pool_saida": None,
+     "classifier": [128]},                              #  2.108.643
+    {"label": "baseline_2L_512", "arch": _ARCH_RED,  "pool_saida": None,
+     "classifier": [512]},                              #  8.401.635 (atual)
+]
+
+# A ResNet do artigo e uma arquitetura FIXA: nao ha o que buscar. Ela entra
+# como candidata unica, e o restante do pipeline -- k-fold, estratificacao
+# conjunta (classe, SNR), train_one_fold, checkpoint, parada por estagnacao --
+# fica exatamente igual ao da CNN. E assim que o artigo compara VGG e ResNet.
+ARQ_RESNET = [{"label": "ResNet_L%d_k%d" % (resnet.N_STACKS, resnet.KERNEL),
+               "arch": None}]
+
+ARCHITECTURES_CNN = [
     {
         "label": "2L_32-64",
         "arch": [
@@ -285,6 +437,10 @@ ARCHITECTURES = [
     },
 ]
 
+MODELO_TIPO   = _ARGS.modelo
+ARCHITECTURES = {'resnet': ARQ_RESNET,
+                 'reducao': ARQ_REDUCAO}.get(MODELO_TIPO, ARCHITECTURES_CNN)
+
 # ══════════════════════════════════════════════════════════════════════════════
 # MAPA DE GRUPOS
 # ══════════════════════════════════════════════════════════════════════════════
@@ -295,10 +451,17 @@ GROUP_MAP = {
     "16PSK":     1, "32PSK":     1, "GMSK":      1, "OQPSK":     1,
     "16APSK":    2, "32APSK":    2, "64APSK":    2, "128APSK":   2,
     "16QAM":     3, "32QAM":     3, "64QAM":     3, "128QAM":    3, "256QAM":    3,
-    "AM-SSB-WC": 4, "AM-SSB-SC": 4, "AM-DSB-WC": 4, "AM-DSB-SC": 4,
-    "FM":        5,
+    # AM (AM-SSB-WC/SC, AM-DSB-WC/SC) e FM foram RETIRADOS do estudo.
+    # Sao modulacoes analogicas; alem disso o FM tem uma unica classe, o que
+    # torna a classificacao dentro do grupo degenerada. Restam 19 modulacoes
+    # digitais em 4 grupos.
 }
-GROUP_NAMES = {0: "ASK", 1: "PSK", 2: "APSK", 3: "QAM", 4: "AM", 5: "FM"}
+GROUP_NAMES = {0: "ASK", 1: "PSK", 2: "APSK", 3: "QAM"}
+GRUPOS_DIGITAIS = ["ASK", "PSK", "APSK", "QAM"]
+# alvos que nao sao um grupo isolado:
+#   GROUP  -> todas as 19 digitais, rotuladas pelo GRUPO (4 classes)
+#   TODAS  -> todas as 19 digitais, rotuladas pela MODULACAO (19 classes)
+ALVOS_ESPECIAIS = ["GROUP", "TODAS"]
 
 sep = "═" * 65
 
@@ -312,6 +475,12 @@ torch.manual_seed(SEED)
 torch.cuda.manual_seed_all(SEED)
 torch.backends.cudnn.deterministic = True
 torch.backends.cudnn.benchmark     = False
+# TF32 desligado de proposito: a T4 (Turing) nao tem TF32, entao toda a
+# referencia do projeto foi medida em fp32 real. L4 (Ada) tem, e o PyTorch
+# liga cudnn.allow_tf32 por padrao -> as convolucoes cairiam para 10 bits de
+# mantissa (precisao de fp16) sem aviso, quebrando a comparabilidade.
+torch.backends.cudnn.allow_tf32       = False
+torch.backends.cuda.matmul.allow_tf32 = False
 
 # ══════════════════════════════════════════════════════════════════════════════
 # FlexCNN
@@ -319,7 +488,16 @@ torch.backends.cudnn.benchmark     = False
 
 class FlexCNN(nn.Module):
     def __init__(self, num_classes, arch, classifier=None,
-                 dropout=0.5, in_channels=2, input_length=1024):
+                 dropout=0.5, in_channels=2, input_length=1024,
+                 pool_saida=None):
+        """pool_saida: se dado, AdaptiveAvgPool1d(pool_saida) antes do flatten.
+
+        Medido em 22/08/2026 na 2L_32-64 com 3 classes: as convolucoes sao
+        10.976 parametros (0,1% do modelo) e a primeira densa e 8.390.659
+        (99,9%), porque 2 poolings deixam 64 x 256 = 16.384 features. Reduzir
+        esse 16.384 e o unico caminho que muda o tamanho de forma relevante;
+        encurtar a cabeca ataca a dimensao errada.
+        """
         super().__init__()
         if classifier is None:
             classifier = [512]
@@ -339,11 +517,13 @@ class FlexCNN(nn.Module):
             ch_in = ch_out
 
         self.features = nn.Sequential(*layers)
+        self.reduz = (nn.AdaptiveAvgPool1d(pool_saida) if pool_saida
+                      else nn.Identity())
         self.flatten  = nn.Flatten()
 
         with torch.no_grad():
             dummy  = torch.zeros(1, in_channels, input_length)
-            n_flat = self.features(dummy).view(1, -1).size(1)
+            n_flat = self.reduz(self.features(dummy)).view(1, -1).size(1)
 
         head = []
         prev = n_flat
@@ -355,17 +535,31 @@ class FlexCNN(nn.Module):
         self.classifier = nn.Sequential(*head)
 
     def forward(self, x):
-        return self.classifier(self.flatten(self.features(x)))
+        return self.classifier(self.flatten(self.reduz(self.features(x))))
 
 # ══════════════════════════════════════════════════════════════════════════════
 # FUNÇÕES AUXILIARES
 # ══════════════════════════════════════════════════════════════════════════════
 
 def _drive_dir(modelo):
-    """Retorna e cria o diretório do modelo no Drive."""
-    d = os.path.join(DRIVE_BASE, modelo)
+    """Diretorio dos artefatos do alvo, SEPARADO por tipo de modelo.
+
+    A CNN mantem o caminho historico <base>/<alvo>, para os folds ja
+    concluidos continuarem validos. A ResNet vai para <base>/<alvo>_resnet.
+    Sem isso as duas gravariam no mesmo kfold_fold_results.json e a retomada
+    trataria uma busca de 12 arquiteturas e uma rede fixa como a mesma coisa.
+    """
+    nome = modelo if MODELO_TIPO == "cnn" else "%s_%s" % (modelo, MODELO_TIPO)
+    d = os.path.join(DRIVE_BASE, nome)
     os.makedirs(d, exist_ok=True)
     return d
+
+
+def _ckpt_path(modelo):
+    """Checkpoint do fold EM ANDAMENTO. Nome fixo: so um fold corre por vez
+    por grupo, e assim o painel sabe o que espelhar sem listar o diretorio.
+    A identidade (arquitetura, fold) vai DENTRO do arquivo e e conferida."""
+    return os.path.join(_drive_dir(modelo), "ckpt_atual.pt")
 
 
 def _idx_path(modelo, name):
@@ -472,6 +666,33 @@ def check_snr_balance(splits, train_idx, h5_loc, max_dev_pp=0.5):
 # PASSO 1 — HDF5 FILTRADO COM LABELS REMAPEADOS
 # ══════════════════════════════════════════════════════════════════════════════
 
+def _alvo_info(modelo, mod_classes):
+    """Indices globais, mapa global->rotulo e numero de classes de um alvo.
+
+    Tres formas de alvo, todas alimentando o mesmo _build_hdf5:
+
+      <grupo>  ASK/PSK/APSK/QAM -- so as modulacoes daquele grupo, rotuladas
+               pela modulacao (3, 7, 4 e 5 classes respectivamente).
+      GROUP    todas as 19 digitais, rotuladas pelo GRUPO -> 4 classes. E o
+               classificador de primeiro estagio.
+      TODAS    todas as 19 digitais, rotuladas pela MODULACAO -> 19 classes.
+               E a tarefa que o artigo faz de uma vez so (la com 24, porque
+               inclui as analogicas que retiramos).
+    """
+    digitais = sorted(i for i, m in enumerate(mod_classes) if m in GROUP_MAP)
+    if modelo == "GROUP":
+        idx = np.array(digitais, dtype=np.int64)
+        mapa = {int(g): GROUP_MAP[mod_classes[g]] for g in digitais}
+        return idx, mapa, len(GROUP_NAMES)
+    if modelo == "TODAS":
+        idx = np.array(digitais, dtype=np.int64)
+        return idx, {int(g): l for l, g in enumerate(digitais)}, len(digitais)
+    alvo = {v: k for k, v in GROUP_NAMES.items()}[modelo]
+    idx = np.array(sorted(i for i, m in enumerate(mod_classes)
+                          if GROUP_MAP.get(m) == alvo), dtype=np.int64)
+    return idx, {int(g): l for l, g in enumerate(idx)}, len(idx)
+
+
 def ensure_hdf5(modelo, mod_classes):
     """
     Garante que o HDF5 filtrado existe localmente com labels remapeados.
@@ -482,14 +703,7 @@ def ensure_hdf5(modelo, mod_classes):
     h5_drv  = _h5_drive(modelo)
     snr_set = set(DESIRED_SNRS)
 
-    target_id       = {v: k for k, v in GROUP_NAMES.items()}[modelo]
-    group_indices   = np.array(
-        sorted([i for i, m in enumerate(mod_classes)
-                if GROUP_MAP[m] == target_id]),
-        dtype=np.int64
-    )
-    num_classes     = len(group_indices)
-    global_to_local = {int(g): l for l, g in enumerate(group_indices)}
+    group_indices, global_to_local, num_classes = _alvo_info(modelo, mod_classes)
 
     # ── Carrega do Drive se disponível ───────────────────────────────────────
     if not os.path.exists(h5_loc):
@@ -812,7 +1026,9 @@ def grupo_completo(modelo):
 
 def train_one_fold(model, tr_loader, vl_loader, device,
                    lr, epochs, lr_patience, early_stop, lr_min,
-                   lr_factor_base=None, lr_factor_floor=None, min_delta=None):
+                   lr_factor_base=None, lr_factor_floor=None, min_delta=None,
+                   stag_patience=None, stag_margin=None,
+                   ckpt_path=None, ckpt_every=None, ckpt_id=None):
     """
     Treina um fold com:
       • Melhora só conta se superar `min_delta` p.p. (o resto é ruído)
@@ -831,6 +1047,9 @@ def train_one_fold(model, tr_loader, vl_loader, device,
     if lr_factor_base  is None: lr_factor_base  = LR_FACTOR_BASE
     if lr_factor_floor is None: lr_factor_floor = LR_FACTOR_FLOOR
     if min_delta       is None: min_delta       = MIN_DELTA
+    if stag_patience   is None: stag_patience   = STAGNATION_PATIENCE
+    if stag_margin     is None: stag_margin     = STAGNATION_MARGIN
+    if ckpt_every      is None: ckpt_every      = CKPT_EVERY
     criterion = nn.CrossEntropyLoss()
     optimizer = optim.Adam(model.parameters(), lr=lr)
 
@@ -840,10 +1059,79 @@ def train_one_fold(model, tr_loader, vl_loader, device,
     best_state        = None
     epochs_no_improve = 0
     consec_drops      = 0      # reduções consecutivas sem melhora → escalonamento
+    marco_acc         = -1e9   # último avanço REAL (supera stag_margin)
+    marco_ep          = 0      # época desse avanço; base da parada absoluta
     history           = []
     model.to(device)
 
-    for epoch in range(epochs):
+    # ── RETOMADA DE FOLD INTERROMPIDO ─────────────────────────────────────────
+    # A VM do Colab cai a cada ~1 h. Sem isto, um fold interrompido perde tudo:
+    # em 22/08/2026 o PSK morreu na epoca 93 de 120 e recomecou do zero. O
+    # kfold_fold_results.json so grava folds CONCLUIDOS, entao nao ajuda aqui.
+    # O `best_state` de proposito NAO entra no checkpoint: ele so alimenta um
+    # load_state_dict no fim que ninguem consome (o chamador usa apenas
+    # best_val_acc e history), e guarda-lo dobraria o tamanho do arquivo.
+    ep_inicial = 0
+    if ckpt_path and os.path.exists(ckpt_path):
+        try:
+            ck = torch.load(ckpt_path, map_location=device, weights_only=False)
+            if ckpt_id is not None and ck.get('id') != list(ckpt_id):
+                # sobra de outro (arquitetura, fold): ignorar e comecar limpo
+                raise ValueError('checkpoint de %r, esperado %r'
+                                 % (ck.get('id'), list(ckpt_id)))
+
+            # ATOMICIDADE. Em 22/08/2026 um fold do QAM voltou com history de
+            # 185 entradas para um teto de 120: as epocas 1-65 do checkpoint
+            # MAIS um treino completo 1-120. A causa era este bloco atribuir
+            # direto nas variaveis e o `except` so zerar ep_inicial -- o
+            # history restaurado sobrevivia e o treino recomecava por cima.
+            # Agora nada e comprometido antes de TUDO dar certo.
+            _model_sd = ck['model']
+            _optim_sd = ck['optim']
+            _novo = dict(ep_inicial=ck['epoch'], best=ck['best_val_acc'],
+                         ref=ck['ref_acc'], sem=ck['epochs_no_improve'],
+                         drops=ck['consec_drops'], m_acc=ck['marco_acc'],
+                         m_ep=ck['marco_ep'], hist=list(ck['history']),
+                         lr=ck['lr'])
+            if ck.get('rng_torch') is not None:
+                torch.set_rng_state(ck['rng_torch'].cpu()
+                                    if hasattr(ck['rng_torch'], 'cpu')
+                                    else ck['rng_torch'])
+            if ck.get('rng_cuda') and torch.cuda.is_available():
+                try:
+                    torch.cuda.set_rng_state_all(ck['rng_cuda'])
+                except Exception:
+                    pass          # numero de GPUs mudou entre as VMs
+            if ck.get('rng_loader') is not None and getattr(tr_loader, 'generator', None):
+                tr_loader.generator.set_state(ck['rng_loader'])
+            if ck.get('rng_np') is not None:
+                np.random.set_state(ck['rng_np'])
+            if ck.get('rng_py') is not None:
+                random.setstate(ck['rng_py'])
+            model.load_state_dict(_model_sd)
+            optimizer.load_state_dict(_optim_sd)
+            for pg in optimizer.param_groups:
+                pg['lr'] = _novo['lr']
+
+            # so aqui o estado do treino e efetivamente trocado
+            ep_inicial        = _novo['ep_inicial']
+            best_val_acc      = _novo['best']
+            ref_acc           = _novo['ref']
+            epochs_no_improve = _novo['sem']
+            consec_drops      = _novo['drops']
+            marco_acc         = _novo['m_acc']
+            marco_ep          = _novo['m_ep']
+            history           = _novo['hist']
+            print(f'    ↺ Retomando da epoca {ep_inicial+1} '
+                  f'(best ate aqui {best_val_acc:.2f}%, lr={_novo["lr"]:.2e})')
+        except Exception as e:
+            print(f'    (checkpoint descartado, comecando do zero: {e!r})')
+            ep_inicial, history = 0, []
+            best_val_acc = ref_acc = 0.0
+            epochs_no_improve = consec_drops = 0
+            marco_acc, marco_ep = -1e9, 0
+
+    for epoch in range(ep_inicial, epochs):
 
         # ── Treino ────────────────────────────────────────────────────────────
         model.train()
@@ -901,6 +1189,10 @@ def train_one_fold(model, tr_loader, vl_loader, device,
             best_val_acc = vl_acc
             best_state   = copy.deepcopy(model.state_dict())
 
+        # ── Marco absoluto: base da parada por estagnação ─────────────────────
+        if vl_acc > marco_acc + stag_margin:
+            marco_acc, marco_ep = vl_acc, epoch + 1
+
         # ── Paciência: só é melhora se superar min_delta ──────────────────────
         if vl_acc > ref_acc + min_delta:
             ref_acc           = vl_acc
@@ -926,6 +1218,78 @@ def train_one_fold(model, tr_loader, vl_loader, device,
             print(f"    🛑 Early stopping na época {epoch+1} "
                   f"(LR no piso {lr_min:.1e} + {early_stop} épocas sem melhora)")
             break
+
+        # ── Parada por estagnação ABSOLUTA ────────────────────────────────────
+        # Independente do LR de propósito. O critério acima só dispara com o LR
+        # no piso, e chegar lá depende de `epochs_no_improve`/`consec_drops`, que
+        # zeram a cada oscilação para cima da val_acc. Medido em 22/08/2026: o
+        # ruído p90 entre épocas é 0,33 p.p. no ASK, 0,28 no QAM e 1,33 no APSK
+        # — sempre acima de MIN_DELTA. No APSK isso travou o escalonamento em
+        # ×0.5, o LR parou em 3,5e-7 sem alcançar o piso de 1e-7, e o fold rodou
+        # as 120 épocas inteiras. Não há valor de MIN_DELTA que resolva: a
+        # varredura deu resultado não-monotônico, porque mexer no limiar muda o
+        # caminho do LR. Este contador não é zerado por redução de LR nem por
+        # ruído abaixo de `stag_margin`; conta desde o último avanço REAL.
+        if (epoch + 1) - marco_ep >= stag_patience:
+            print(f"    🛑 Parada por estagnação na época {epoch+1} "
+                  f"({stag_patience} épocas sem avanço de {stag_margin} p.p.; "
+                  f"último marco: {marco_acc:.2f}% na época {marco_ep})")
+            break
+
+        # ── Checkpoint periodico ──────────────────────────────────────────────
+        # Custa ~1 s e salva ate uma hora de GPU quando a VM cai. Fica so o
+        # arquivo mais recente (sobrescreve), gravado via .tmp + os.replace
+        # para uma queda no meio da escrita nao deixar um checkpoint corrompido.
+        if ckpt_path and ckpt_every and (epoch + 1) % ckpt_every == 0:
+            try:
+                os.makedirs(os.path.dirname(ckpt_path), exist_ok=True)
+                tmp = ckpt_path + ".tmp"
+                torch.save({
+                    "id"               : list(ckpt_id) if ckpt_id else None,
+                    "epoch"            : epoch + 1,
+                    "model"            : model.state_dict(),
+                    "optim"            : optimizer.state_dict(),
+                    "lr"               : optimizer.param_groups[0]["lr"],
+                    "best_val_acc"     : best_val_acc,
+                    "ref_acc"          : ref_acc,
+                    "epochs_no_improve": epochs_no_improve,
+                    "consec_drops"     : consec_drops,
+                    "marco_acc"        : marco_acc,
+                    "marco_ep"         : marco_ep,
+                    "history"          : history,
+                    # Sem estes, a retomada NAO e identica: o dropout e a ordem
+                    # de embaralhamento do DataLoader continuariam de outro
+                    # ponto da sequencia. O gerador do loader e o mesmo objeto
+                    # que o chamador semeou com fold_seed.
+                    "rng_torch"        : torch.get_rng_state(),
+                    "rng_cuda"         : (torch.cuda.get_rng_state_all()
+                                          if torch.cuda.is_available() else None),
+                    "rng_loader"       : (tr_loader.generator.get_state()
+                                          if getattr(tr_loader, "generator", None)
+                                          is not None else None),
+                    "rng_np"           : np.random.get_state(),
+                    "rng_py"           : random.getstate(),
+                }, tmp)
+                os.replace(tmp, ckpt_path)
+                # indice leve: o painel precisa saber a QUE fold este
+                # checkpoint pertence antes de decidir se vale subir centenas
+                # de MB para a VM nova. Ler o .pt so para isso seria absurdo.
+                with open(ckpt_path + '.json', 'w') as _j:
+                    json.dump({'id': list(ckpt_id) if ckpt_id else None,
+                               'epoch': epoch + 1,
+                               'best_val_acc': best_val_acc}, _j)
+                print(f"    💾 checkpoint ep {epoch+1} "
+                      f"({os.path.getsize(ckpt_path)/1e6:.0f} MB)")
+            except Exception as e:
+                print(f"    (falha ao gravar checkpoint: {e!r})")
+
+    # Fold concluido: o checkpoint perdeu a razao de existir.
+    if ckpt_path:
+        for _p in (ckpt_path, ckpt_path + '.json'):
+            try:
+                os.remove(_p)
+            except OSError:
+                pass
 
     if best_state is not None:
         model.load_state_dict(best_state)
@@ -990,8 +1354,12 @@ def search_grupo(modelo, mod_classes):
         print(f"\n{sep}")
         print(f"  [{arch_idx}/{len(ARCHITECTURES)}]  "
               f"{modelo}  │  {label}")
-        print(f"  Filtros : " +
-              " → ".join(str(b["out_channels"]) for b in arch))
+        if arch:
+            print(f"  Filtros : " +
+                  " → ".join(str(b["out_channels"]) for b in arch))
+        else:
+            print(f"  ResNet  : {resnet.N_STACKS} stacks × {resnet.CHANNELS} canais"
+                  f"  │  kernel {resnet.KERNEL}  │  arXiv:1712.04578")
         restantes = [f+1 for f in range(K_FOLDS)
                      if (label, f) not in done_set]
         print(f"  Folds restantes: {restantes}")
@@ -1035,8 +1403,15 @@ def search_grupo(modelo, mod_classes):
                 batch_size=BATCH_SIZE, shuffle=False, num_workers=0
             )
 
-            model    = FlexCNN(num_classes=num_classes, arch=arch,
-                               classifier=CLASSIFIER_HEAD, dropout=DROPOUT)
+            if MODELO_TIPO == "resnet":
+                model = resnet.ResNet(num_classes=num_classes)
+            else:
+                # no modo reducao a candidata carrega sua propria cabeca
+                model = FlexCNN(num_classes=num_classes, arch=arch,
+                                classifier=arch_entry.get("classifier",
+                                                          CLASSIFIER_HEAD),
+                                dropout=DROPOUT,
+                                pool_saida=arch_entry.get("pool_saida"))
             n_params = sum(p.numel() for p in model.parameters()
                           if p.requires_grad)
             print(f"  Parâmetros: {n_params:,}")
@@ -1052,6 +1427,11 @@ def search_grupo(modelo, mod_classes):
                 epochs     = EPOCHS_PER_FOLD,
                 lr_patience= LR_PATIENCE,
                 early_stop = EARLY_STOP,
+                stag_patience = STAGNATION_PATIENCE,
+                stag_margin   = STAGNATION_MARGIN,
+                ckpt_path     = _ckpt_path(modelo),
+                ckpt_every    = CKPT_EVERY,
+                ckpt_id       = [label, fold_i],
                 lr_min     = LR_MIN,
                 lr_factor_base  = LR_FACTOR_BASE,
                 lr_factor_floor = LR_FACTOR_FLOOR,
@@ -1072,9 +1452,11 @@ def search_grupo(modelo, mod_classes):
                 "elapsed_s"   : round(elapsed, 1),
                 "n_params"    : n_params,
                 "fold_seed"   : fold_seed,
+                "modelo_tipo" : MODELO_TIPO,
                 "arch"        : arch,
-                "n_layers"    : len(arch),
-                "filters"     : [b["out_channels"] for b in arch],
+                "n_layers"    : len(arch) if arch else resnet.N_STACKS,
+                "filters"     : ([b["out_channels"] for b in arch] if arch
+                                 else [resnet.CHANNELS] * resnet.N_STACKS),
                 "classifier"  : CLASSIFIER_HEAD,
                 "dropout"     : DROPOUT,
                 "lr"          : LEARNING_RATE,
@@ -1084,6 +1466,8 @@ def search_grupo(modelo, mod_classes):
                 "lr_factor_base"  : LR_FACTOR_BASE,
                 "lr_factor_floor" : LR_FACTOR_FLOOR,
                 "min_delta"       : MIN_DELTA,
+                "stagnation_patience" : STAGNATION_PATIENCE,
+                "stagnation_margin"   : STAGNATION_MARGIN,
                 "history"     : history,
             }
 
@@ -1148,6 +1532,8 @@ def run_all():
           f"Early stop: {EARLY_STOP} épocas (só com LR no piso)")
     print(f"  LR escalonado: fator {LR_FACTOR_BASE}^n  │  "
           f"piso {LR_MIN:.0e}  │  min_delta {MIN_DELTA} p.p.")
+    print(f"  Parada por estagnação: {STAGNATION_PATIENCE} épocas sem avanço "
+          f"de {STAGNATION_MARGIN} p.p. (independente do LR)")
     print(f"{'#'*65}")
 
     for gi, modelo in enumerate(GRUPOS_ALVO, 1):

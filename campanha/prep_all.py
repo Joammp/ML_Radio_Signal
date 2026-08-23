@@ -11,10 +11,10 @@ GROUP_MAP = {
     "BPSK": 1, "QPSK": 1, "8PSK": 1, "16PSK": 1, "32PSK": 1, "GMSK": 1, "OQPSK": 1,
     "16APSK": 2, "32APSK": 2, "64APSK": 2, "128APSK": 2,
     "16QAM": 3, "32QAM": 3, "64QAM": 3, "128QAM": 3, "256QAM": 3,
-    "AM-SSB-WC": 4, "AM-SSB-SC": 4, "AM-DSB-WC": 4, "AM-DSB-SC": 4,
-    "FM": 5,
+    
+    # AM e FM retirados: analogicas, e o FM tem classe unica.
 }
-GRUPOS = {0: "ASK", 1: "PSK", 2: "APSK", 3: "QAM", 4: "AM"}   # FM: 1 classe, degenerado
+GRUPOS = {0: "ASK", 1: "PSK", 2: "APSK", 3: "QAM"}   # so digitais
 FP_QAM = "847f44cb75a4c7b653744e34d30c039473e8daa805ec532ea46f233310ab9981"
 
 
