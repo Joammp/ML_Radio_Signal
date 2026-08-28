@@ -36,7 +36,7 @@ def _argv_tp():
 
 
 _A = _p.parse_args(_argv_tp())
-DRIVE_BASE = "/content/drive_cache/radioml_sessions"
+DRIVE_BASE = "/content/drive_cache/radioml_v2"   # casa com RAIZ_VM do painel
 
 
 def run_all():

@@ -97,13 +97,15 @@ contra referência conhecida.
 
 ## Hiperparâmetros e o porquê
 
-`gerar_busca_hp.py` produz `busca_hp.py` a partir do notebook do branch
-`atualiza-busca-hp-estratificacao` (que já tem `STRAT_BY_SNR=True`, `MIN_DELTA=0.05` e a
-redução escalonada). **Não** usar a versão de `main`, anterior a tudo isso.
+`busca_hp.py` é a **fonte de verdade** e se edita à mão. Ele nasceu gerado por
+`gerar_busca_hp.py` a partir do notebook do branch
+`atualiza-busca-hp-estratificacao`, mas o gerador foi aposentado em 28/08/2026
+(ver `aposentados/LEIA-ME.md`): a busca de redução foi escrita direto no
+`busca_hp.py` e regenerar a apagaria.
 
 | Parâmetro | Notebook | Aqui | Motivo |
 |---|---|---|---|
-| `LEARNING_RATE` | 1e-3 | **9e-5** | 1e-3 colapsa o QAM em 15/15 folds medidos |
+| `LEARNING_RATE` | 1e-3 | **4,5e-5** (CNN) · **4,5e-4** (redução/ResNet) | 1e-3 colapsa o QAM em 15/15 folds; 4,5e-5 truncava a redução no teto de épocas |
 | `LR_PATIENCE` | 5 | **8** | pedido |
 | `EARLY_STOP` | 15 | **20** | acompanha a paciência maior |
 | `drive_push/pull` | ativo na VM | **no-op** | o token de escopo `drive` não sai da máquina local |

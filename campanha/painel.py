@@ -40,7 +40,12 @@ RESULTADOS = os.path.join(AQUI, "resultados")
 RUNNER = os.path.join(AQUI, "runner_vm.py")
 RESNET_PY = os.path.join(AQUI, "resnet.py")
 # onde o busca_hp grava/le os artefatos DENTRO da VM (o DRIVE_BASE dele)
-_DRIVE_VM = "/content/drive_cache/radioml_sessions/%s"
+# Raiz dos artefatos na VM. Trocar AQUI comeca uma rodada limpa sem tocar
+# na anterior: resultados, checkpoints, HDF5 e indices de fold ficam todos
+# sob esta raiz. Tem de casar com --drive-base nos perfis abaixo, senao o
+# painel baixa de um caminho e o treino grava em outro.
+RAIZ_VM = "/content/drive_cache/radioml_v2"
+_DRIVE_VM = RAIZ_VM + "/%s"
 
 
 # perfil -> sufixo dos artefatos. A CNN fica sem sufixo (caminho historico,
@@ -84,7 +89,7 @@ PERFIS = {
     "campanha": {
         "alvo": os.path.join(AQUI, "busca_hp.py"),
         "envvar": "BUSCA_HP_ARGS",
-        "args": "--grupos {grupo} --lr 4.5e-5",
+        "args": "--grupos {grupo} --lr 4.5e-5" " --drive-base " + RAIZ_VM,
         "prep": False,          # busca_hp baixa o dado sozinho via kagglehub
         "total_folds": 60,      # 12 arquiteturas x 5 folds
     },
@@ -95,7 +100,7 @@ PERFIS = {
         "alvo": os.path.join(AQUI, "busca_hp.py"),
         "envvar": "BUSCA_HP_ARGS",
         "args": "--grupos {grupo} --lr 4.5e-4 --modelo reducao"
-                "  --epochs 1000 --ckpt-every 1",
+                "  --epochs 1000 --ckpt-every 1" " --drive-base " + RAIZ_VM,
         "prep": False,
         "total_folds": 40,     # 8 candidatas x 5 folds
     },
@@ -104,7 +109,7 @@ PERFIS = {
         "alvo": os.path.join(AQUI, "busca_hp.py"),
         "envvar": "BUSCA_HP_ARGS",
         "args": "--grupos {grupo} --lr 4.5e-4 --modelo resnet"
-                "  --epochs 1000 --ckpt-every 1",
+                "  --epochs 1000 --ckpt-every 1" " --drive-base " + RAIZ_VM,
         "prep": False,
         "total_folds": 5,      # 1 arquitetura x 5 folds
     },

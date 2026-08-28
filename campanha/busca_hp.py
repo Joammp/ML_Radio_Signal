@@ -1,9 +1,20 @@
 # -*- coding: utf-8 -*-
-"""GERADO POR gerar_busca_hp.py — NAO EDITAR A MAO.
+"""Motor de treino da campanha. FONTE DE VERDADE -- editar aqui.
 
-Fonte: https://raw.githubusercontent.com/Joammp/ML_Radio_Signal/atualiza-busca-hp-estratificacao/BUSCA_HP_Classes_1cap(3).ipynb
-Celulas 13 (H5PyDataset) e 18 (busca), com hiperparametros
-parametrizados por linha de comando.
+Nasceu gerado por gerar_busca_hp.py, a partir do notebook
+BUSCA_HP_Classes_1cap(3).ipynb (branch atualiza-busca-hp-estratificacao),
+celulas 13 (H5PyDataset) e 18 (busca), com os hiperparametros parametrizados
+por linha de comando.
+
+O gerador foi APOSENTADO em 28/08/2026 e esta em aposentados/, so como
+registro. A busca de reducao de parametros foi escrita direto neste arquivo e
+nunca voltou para ele; regenerar removeria ARQ_REDUCAO, o pool_saida do
+FlexCNN, --modelo reducao, --epochs, --drive-base e os campos de estagnacao do
+fold_result. Medido por diff no dia.
+
+Consomem este arquivo: campanha/painel.py, que o envia para a VM, e
+campanha/treino_reduzido_colab.ipynb, que o baixa do repositorio fixado num
+commit e confere as invariantes antes de rodar.
 
 Diferencas em relacao ao notebook, e por que:
   LEARNING_RATE  1e-3 -> 4.5e-05   1e-3 colapsa o QAM (15/15 folds medidos em 19/08/2026)
@@ -1350,6 +1361,26 @@ def search_grupo(modelo, mod_classes):
     elif _gpus_antes:
         print(f"  GPU consistente com os folds anteriores: {_GPU_NOME}")
 
+    # Trava de semeadura. Ate 27/08/2026 a semente era SEED + arch_idx*100 +
+    # fold_i, dando a cada candidata um conjunto proprio. Retomar um diretorio
+    # daquela geracao acrescentaria folds da semeadura NOVA ao mesmo
+    # kfold_fold_results.json, e nada no arquivo denunciaria a mistura depois:
+    # o checkpoint confere (rotulo, fold), nunca a formula da semente.
+    _semeadura_ruim = [(r.get("label"), r.get("fold"), r.get("fold_seed"))
+                       for r in all_results
+                       if r.get("fold_seed") is not None
+                       and r.get("fold_seed") != SEED + r.get("fold", 0)]
+    if _semeadura_ruim:
+        raise SystemExit(
+            "\n  RECUSADO: %d fold(s) neste diretorio foram gravados com outra\n"
+            "  semeadura. Esperado fold_seed = SEED + fold (%d + fold);\n"
+            "  encontrado, por exemplo: %s\n"
+            "  Diretorio: %s\n"
+            "  Misturar as duas geracoes no mesmo conjunto e irreversivel.\n"
+            "  Aponte --drive-base para uma raiz nova, ou arquive o diretorio.\n"
+            % (len(_semeadura_ruim), SEED, _semeadura_ruim[:3],
+               _drive_dir(modelo)))
+
     total = len(ARCHITECTURES) * K_FOLDS
     done  = len(done_set)
     print(f"  Total jobs: {total}  │  Concluídos: {done}"
@@ -1466,7 +1497,7 @@ def search_grupo(modelo, mod_classes):
                 stag_margin   = STAGNATION_MARGIN,
                 ckpt_path     = _ckpt_path(modelo),
                 ckpt_every    = CKPT_EVERY,
-                ckpt_id       = [label, fold_i],
+                ckpt_id       = [label, fold_i, fold_seed],
                 lr_min     = LR_MIN,
                 lr_factor_base  = LR_FACTOR_BASE,
                 lr_factor_floor = LR_FACTOR_FLOOR,
