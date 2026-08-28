@@ -482,6 +482,9 @@ torch.backends.cudnn.benchmark     = False
 torch.backends.cudnn.allow_tf32       = False
 torch.backends.cuda.matmul.allow_tf32 = False
 
+_GPU_NOME = (torch.cuda.get_device_name(0) if torch.cuda.is_available()
+             else "cpu")
+
 # ══════════════════════════════════════════════════════════════════════════════
 # FlexCNN
 # ══════════════════════════════════════════════════════════════════════════════
@@ -1333,6 +1336,20 @@ def search_grupo(modelo, mod_classes):
 
     all_results, done_set = load_results(modelo)
 
+    # A GPU e a unica condicao que nao conseguimos fixar: os folds rodam em
+    # qualquer aceleradora que esteja livre. Medimos que L4 e T4 nao reproduzem
+    # o mesmo resultado com a mesma semente, entao misturar as duas dentro de um
+    # mesmo conjunto compromete a comparacao. Nao da para impedir daqui, mas da
+    # para avisar alto -- e o registro no fold_result permite auditar depois.
+    _gpus_antes = {r.get('gpu') for r in all_results if r.get('gpu')}
+    if _gpus_antes and _GPU_NOME not in _gpus_antes:
+        print(f"  ATENCAO: folds anteriores deste alvo rodaram em "
+              f"{sorted(_gpus_antes)}, e esta sessao esta em {_GPU_NOME}.")
+        print(f"           Misturar GPUs dentro do mesmo conjunto compromete a "
+              f"comparacao entre candidatas.")
+    elif _gpus_antes:
+        print(f"  GPU consistente com os folds anteriores: {_GPU_NOME}")
+
     total = len(ARCHITECTURES) * K_FOLDS
     done  = len(done_set)
     print(f"  Total jobs: {total}  │  Concluídos: {done}"
@@ -1385,8 +1402,20 @@ def search_grupo(modelo, mod_classes):
             print(f"\n  ── Fold {fold_i+1}/{K_FOLDS} "
                   f"(treino={len(tr_pos):,}  val={len(vl_pos):,}) ──")
 
-            # Seed determinístico e único por (arch, fold)
-            fold_seed = SEED + arch_idx * 100 + fold_i
+            # Seed determinístico, funcao APENAS do fold.
+            #
+            # Era `SEED + arch_idx*100 + fold_i`, o que dava a cada candidata um
+            # conjunto proprio de sementes -- gap1 usava 142-146, gap8_head128
+            # 242-246, e assim por diante. Num projeto cuja tese central e que o
+            # colapso depende da INICIALIZACAO, isso confundia arquitetura com
+            # semente: no ASK, quatro candidatas ficaram separadas por 0,10 a
+            # 0,27 p.p., abaixo da propria dispersao entre folds (0,16 a 0,41).
+            # E o colapso da gap8_head128 no QAM (4 de 5 folds) nao podia ser
+            # atribuido a arquitetura, porque so ela viu aquelas sementes.
+            #
+            # Agora todas as candidatas partem da MESMA inicializacao em cada
+            # fold, e a diferenca entre elas e atribuivel ao que se quis variar.
+            fold_seed = SEED + fold_i
             random.seed(fold_seed)
             np.random.seed(fold_seed)
             torch.manual_seed(fold_seed)
@@ -1459,6 +1488,14 @@ def search_grupo(modelo, mod_classes):
                 "n_params"    : n_params,
                 "fold_seed"   : fold_seed,
                 "modelo_tipo" : MODELO_TIPO,
+                # Ambiente. Sem isto nao da para auditar depois: medimos em
+                # 22/08/2026 que L4 e T4 NAO reproduzem o mesmo resultado com a
+                # mesma semente, e os folds rodam em qualquer GPU que esteja
+                # livre. Registrar nao controla a variavel, mas a torna visivel.
+                "gpu"         : _GPU_NOME,
+                "torch"       : torch.__version__,
+                "cuda"        : torch.version.cuda,
+                "tf32"        : bool(torch.backends.cudnn.allow_tf32),
                 "arch"        : arch,
                 "n_layers"    : len(arch) if arch else resnet.N_STACKS,
                 "filters"     : ([b["out_channels"] for b in arch] if arch
